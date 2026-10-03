@@ -66,6 +66,7 @@ public class MainActivity extends AppCompatActivity {
         startPostponedEnterTransition();
         
         if (savedInstanceState == null) {
+            MblLog.ensureStorageAccess(this);
             // --- Apply custom window flags ---
             getWindow().setStatusBarColor(getColor(R.color.background));
             getWindow().setNavigationBarColor(getColor(R.color.background));
@@ -83,6 +84,7 @@ public class MainActivity extends AppCompatActivity {
 
     public void startLauncher(Handler handler, TextView listener, ScrollView logScrollView, String launcherDexName, String mcPackageName) {    
         Executors.newSingleThreadExecutor().execute(() -> {
+            MblLog.startSession(getApplicationContext(), launcherDexName, mcPackageName);
             try {
                 File cacheDexDir = new File(getCodeCacheDir(), "dex");
                 handleCacheCleaning(cacheDexDir, handler, listener, logScrollView);
@@ -101,9 +103,10 @@ public class MainActivity extends AppCompatActivity {
                 preloadMcDeps(handler, listener, logScrollView);
                 launchMinecraft(mcInfo);
             } catch (Exception e) {
+                MblLog.logThrowable(getApplicationContext(), "startLauncher failed", e);
                 String logMessage = e.getCause() != null ? e.getCause().toString() : e.toString();
                 handler.post(() -> {
-                    listener.setText("Launching failed: " + logMessage);
+                    MblLog.uiSet(listener, "Launching failed: " + logMessage);
                     logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
                 });
             }
@@ -113,20 +116,20 @@ public class MainActivity extends AppCompatActivity {
     private void handleCacheCleaning(@NotNull File cacheDexDir, Handler handler, TextView listener, ScrollView logScrollView) {
         if (cacheDexDir.exists() && cacheDexDir.isDirectory()) {
             handler.post(() -> {
-                listener.setText("-> " + cacheDexDir.getAbsolutePath() + " not empty, do cleaning");
+                MblLog.uiSet(listener, "-> " + cacheDexDir.getAbsolutePath() + " not empty, do cleaning");
                 logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
             });
             for (File file : Objects.requireNonNull(cacheDexDir.listFiles())) {
                 if (file.delete()) {
                     handler.post(() -> {
-                        listener.append("\n-> " + file.getName() + " deleted");
+                        MblLog.ui(listener, "\n-> " + file.getName() + " deleted");
                         logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
                     });
                 }
             }
         } else {
             handler.post(() -> {
-                listener.setText("-> " + cacheDexDir.getAbsolutePath() + " is empty, skip cleaning");
+                MblLog.uiSet(listener, "-> " + cacheDexDir.getAbsolutePath() + " is empty, skip cleaning");
                 logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
             });
         }
@@ -144,14 +147,14 @@ public class MainActivity extends AppCompatActivity {
 
         copyFile(getAssets().open(launcherDexName), launcherDex);
         handler.post(() -> {
-             listener.append("\n-> " + launcherDexName + " copied to " + launcherDex.getAbsolutePath());
+             MblLog.ui(listener, "\n-> " + launcherDexName + " copied to " + launcherDex.getAbsolutePath());
              logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
         });
 
         if (launcherDex.setReadOnly()) {
             addDexPath.invoke(pathList, launcherDex.getAbsolutePath(), null);
             handler.post(() -> {
-                listener.append("\n-> " + launcherDexName + " added to dex path list");
+                MblLog.ui(listener, "\n-> " + launcherDexName + " added to dex path list");
                 logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
             });
         }
@@ -164,13 +167,13 @@ public class MainActivity extends AppCompatActivity {
                     File mcDex = new File(cacheDexDir, dexName);
                     copyFile(zipFile.getInputStream(dexFile), mcDex);
                      handler.post(() -> {
-                         listener.append("\n-> " + mcInfo.sourceDir + "/" + dexName + " copied to " + mcDex.getAbsolutePath());
+                         MblLog.ui(listener, "\n-> " + mcInfo.sourceDir + "/" + dexName + " copied to " + mcDex.getAbsolutePath());
                          logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
                      });
                     if (mcDex.setReadOnly()) {
                         addDexPath.invoke(pathList, mcDex.getAbsolutePath(), null);
                         handler.post(() -> {
-                             listener.append("\n-> " + dexName + " added to dex path list");
+                             MblLog.ui(listener, "\n-> " + dexName + " added to dex path list");
                              logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
                         });
                     }
@@ -178,7 +181,7 @@ public class MainActivity extends AppCompatActivity {
             }
         } catch (Throwable th) {}
          handler.post(() -> {
-             listener.append("\n-> Processed dex files.");
+             MblLog.ui(listener, "\n-> Processed dex files.");
              logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
          });
     }
@@ -204,7 +207,7 @@ public class MainActivity extends AppCompatActivity {
         }
         addNativePath.invoke(pathList, libDirList);
         handler.post(() -> {
-            listener.append("\n-> " + mcInfo.nativeLibraryDir + " added to native library directory path");
+            MblLog.ui(listener, "\n-> " + mcInfo.nativeLibraryDir + " added to native library directory path");
             logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
         });
         return true;
@@ -315,7 +318,7 @@ public class MainActivity extends AppCompatActivity {
             }
             final String line = status;
             handler.post(() -> {
-                listener.append("\n" + line);
+                MblLog.ui(listener, "\n" + line);
                 logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
             });
         }
@@ -333,6 +336,7 @@ public class MainActivity extends AppCompatActivity {
             mcActivity.putExtra("MC_SPLIT_SRC", listSrcSplit);
         }
 
+        MblLog.write("[MBL] startActivity(com.mojang.minecraftpe.Launcher) - from here on Minecraft's own logs follow");
         startActivity(mcActivity);
         finish();
     }

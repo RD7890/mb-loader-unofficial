@@ -12,13 +12,17 @@ public class MBLoaderApp extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
-        
+
+        // Append why the previous launch process died (native crash, kill, ...) to latestlogs.txt
+        MblLog.recordPreviousExit(this);
+
         // Set up the default uncaught exception handler
         Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             throwable.printStackTrace(pw);
             String stackTraceString = sw.toString();
+            MblLog.logThrowable(MBLoaderApp.this, "FATAL uncaught exception in thread " + thread.getName(), throwable);
             
             // Start the crash activity with the stack trace
             Intent intent = new Intent(MBLoaderApp.this, CrashActivity.class);

@@ -145,11 +145,13 @@ jobs:
             ### Changes in this build
             - **Fix `libpairipcore.so not found`** — preloads Minecraft's native dependencies (`c++_shared`, `fmod`, `pairipcore`, `PlayFabMultiplayer`, `HttpClient.Android`, `maesdk`) before launching, for Minecraft 1.26.x builds
             - **Better diagnostics** — preload results are shown in the launcher log; `libmc.so` now logs `dlopen`/`dlsym` failures to logcat (tag `MBL`) instead of crashing silently
+            - **Log saving** — each launch writes `mbl-logs/latestlogs.txt` (device info, launcher log, live logcat, Java exceptions, and the exit reason/tombstone of a crashed process added when you reopen the app). The previous attempt is kept as `previous-logs.txt`
 
             ### Install
             1. Install the **official Minecraft: Bedrock Edition** from Google Play first (arm64 build)
             2. Download the APK above and enable **Install from unknown sources**
-            3. Open **MB Loader**, then choose **MBL2** or **Draco** to launch Minecraft
+            3. Allow **All files access** when asked, so logs can be saved to `mbl-logs/` in your storage
+            4. Open **MB Loader**, then choose **MBL2** or **Draco** to launch Minecraft
 
             > Unofficial build, not affiliated with Mojang, Microsoft or the original MaterialBinLoader author.
           draft: false
