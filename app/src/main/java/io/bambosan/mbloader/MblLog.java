@@ -14,7 +14,6 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
-import android.os.Process;
 import android.provider.Settings;
 import android.util.Log;
 import android.widget.TextView;
@@ -65,7 +64,7 @@ public final class MblLog {
 
     private static Writer writer;
     private static long written;
-    private static Process logcatProc;
+    private static java.lang.Process logcatProc;
 
     private MblLog() {}
 
@@ -173,7 +172,7 @@ public final class MblLog {
             written = 0;
 
             ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                    .putInt(KEY_PID, Process.myPid()).apply();
+                    .putInt(KEY_PID, android.os.Process.myPid()).apply();
 
             writeHeader(ctx, dir, launcherDex, mcPackage);
             startLogcat();
@@ -190,7 +189,7 @@ public final class MblLog {
         write("device      : " + Build.MANUFACTURER + " " + Build.MODEL + " (" + Build.DEVICE + ")");
         write("android     : " + Build.VERSION.RELEASE + " / SDK " + Build.VERSION.SDK_INT);
         write("abis        : " + Arrays.toString(Build.SUPPORTED_ABIS));
-        write("pid         : " + Process.myPid());
+        write("pid         : " + android.os.Process.myPid());
         write("launcher dex: " + launcherDex);
         try {
             PackageInfo me = ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0);
@@ -227,7 +226,7 @@ public final class MblLog {
     private static void startLogcat() {
         stopLogcat();
         try {
-            logcatProc = new ProcessBuilder("logcat", "-v", "threadtime", "--pid=" + Process.myPid())
+            logcatProc = new ProcessBuilder("logcat", "-v", "threadtime", "--pid=" + android.os.Process.myPid())
                     .redirectErrorStream(true).start();
         } catch (Exception e) {
             write("[MBL] could not start logcat: " + e);
@@ -326,7 +325,7 @@ public final class MblLog {
     private static void appendExitInfo(Context ctx) throws IOException {
         SharedPreferences sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         int pid = sp.getInt(KEY_PID, -1);
-        if (pid < 0 || pid == Process.myPid()) return;
+        if (pid < 0 || pid == android.os.Process.myPid()) return;
         sp.edit().remove(KEY_PID).apply();
 
         ActivityManager am = (ActivityManager) ctx.getSystemService(Context.ACTIVITY_SERVICE);
