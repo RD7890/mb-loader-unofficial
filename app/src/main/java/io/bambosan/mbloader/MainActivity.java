@@ -42,7 +42,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
@@ -50,6 +52,9 @@ import java.util.zip.ZipInputStream;
 public class MainActivity extends AppCompatActivity {
 
     public static final String MC_PACKAGE_NAME = "com.mojang.minecraftpe";
+
+    /** Directory that actually holds Minecraft's .so files (its nativeLibraryDir or our code cache copy). */
+    private String mcLibDir;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -202,8 +207,10 @@ public class MainActivity extends AppCompatActivity {
 		 || (mcInfo.flags & ApplicationInfo.FLAG_EXTRACT_NATIVE_LIBS) != ApplicationInfo.FLAG_EXTRACT_NATIVE_LIBS) {
 			loadUnextractedLibs(mcInfo);
 			libDirList.add(getCodeCacheDir().getAbsolutePath() + "/");
+			mcLibDir = getCodeCacheDir().getAbsolutePath();
 		} else {
             libDirList.add(mcInfo.nativeLibraryDir);
+            mcLibDir = mcInfo.nativeLibraryDir;
         }
         addNativePath.invoke(pathList, libDirList);
         handler.post(() -> {
@@ -291,37 +298,99 @@ public class MainActivity extends AppCompatActivity {
 
     /**
      * Newer Minecraft builds (1.26.x, Google Play "PairIP" protected) ship libminecraftpe.so with
-     * DT_NEEDED entries on several libraries that live in MC's own lib dir. Android's linker resolves
-     * those dependencies inside THIS app's classloader namespace, which does not see MC's lib dir, so
-     * dlopen fails with: library "libpairipcore.so" not found: needed by libminecraftpe.so.
-     * System.loadLibrary() goes through our patched pathList (see processNativeLibraries) and
-     * registers each soname, so the linker finds them already loaded when libminecraftpe.so loads.
-     * Order matters: c++_shared first because the others depend on it.
+     * DT_NEEDED entries on libpairipcore.so, libPlayFabMultiplayer.so, libHttpClient.Android.so, libmaesdk.so,
+     * libfmod.so and libc++_shared.so. Android's linker resolves those inside THIS app's classloader
+     * namespace, which does not see MC's lib dir, so dlopen fails with
+     * 'library "libpairipcore.so" not found: needed by libminecraftpe.so'.
+     *
+     * Fix: map the dependencies ourselves first, by absolute path, so the linker finds them by soname.
+     *
+     * libpairipcore.so is special: System.loadLibrary("pairipcore") runs its JNI_OnLoad (PairIP VM init)
+     * which segfaults inside this process (see logs). Its other users (PlayFab, maesdk, libminecraftpe)
+     * only import ExecuteProgram. So by default every dependency except c++_shared/fmod is mapped with a
+     * plain dlopen() (NativePreload), which never calls JNI_OnLoad - the same thing the linker would do
+     * in the real Minecraft app. Minecraft's own Java code still calls System.loadLibrary later.
+     *
+     * Mode can be switched without rebuilding via  mbl-logs/preload_mode.txt :
+     *   dlopen     (default) pairipcore + others via dlopen, no JNI_OnLoad
+     *   mainthread          pairipcore via System.loadLibrary on the UI thread (runs JNI_OnLoad there)
+     *
      * This has to run BEFORE the Launcher activity starts (MC's MainActivity.<clinit> loads
      * libminecraftpe.so before Launcher's own static block runs).
      */
-    private static final String[] MC_PRELOAD_LIBS = {
-            "c++_shared", "fmod", "pairipcore",
-            "PlayFabMultiplayer", "HttpClient.Android", "maesdk"
-    };
-
     private void preloadMcDeps(@NotNull Handler handler, TextView listener, ScrollView logScrollView) {
-        for (String lib : MC_PRELOAD_LIBS) {
-            String status;
+        String mode = MblLog.readPreloadMode(getApplicationContext());
+        preloadLog(handler, listener, logScrollView, "\n-> preload mode: " + mode + ", lib dir: " + mcLibDir);
+
+        // 1) c++_shared + fmod: plain System.loadLibrary, known to work (see earlier logs).
+        for (String lib : new String[]{"c++_shared", "fmod"}) {
             try {
                 System.loadLibrary(lib);
-                status = "-> preloaded lib" + lib + ".so";
+                preloadLog(handler, listener, logScrollView, "\n-> preloaded lib" + lib + ".so");
             } catch (Throwable t) {
-                // Not fatal: older Minecraft versions simply don't ship some of these.
                 Log.w("MBL", "preload failed: " + lib, t);
-                status = "-> skipped lib" + lib + ".so (" + t.getMessage() + ")";
+                preloadLog(handler, listener, logScrollView, "\n-> skipped lib" + lib + ".so (" + t.getMessage() + ")");
             }
-            final String line = status;
-            handler.post(() -> {
-                MblLog.ui(listener, "\n" + line);
-                logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
-            });
         }
+
+        // 2) libpairipcore.so
+        if ("mainthread".equals(mode)) {
+            preloadLog(handler, listener, logScrollView, "\n-> loading libpairipcore.so on main thread (JNI_OnLoad will run)");
+            String err = loadLibraryOnMainThread("pairipcore");
+            preloadLog(handler, listener, logScrollView, err == null
+                    ? "\n-> preloaded libpairipcore.so (main thread)"
+                    : "\n-> FAILED libpairipcore.so (main thread): " + err);
+        } else {
+            dlopenDep("pairipcore", handler, listener, logScrollView);
+        }
+
+        // 3) remaining deps of libminecraftpe.so, mapped without JNI_OnLoad
+        for (String lib : new String[]{"PlayFabMultiplayer", "HttpClient.Android", "maesdk"}) {
+            dlopenDep(lib, handler, listener, logScrollView);
+        }
+    }
+
+    private void dlopenDep(String lib, Handler handler, TextView listener, ScrollView logScrollView) {
+        if (!NativePreload.AVAILABLE) {
+            preloadLog(handler, listener, logScrollView, "\n-> FAILED lib" + lib + ".so: libmblpreload.so not loadable");
+            return;
+        }
+        File f = new File(mcLibDir, "lib" + lib + ".so");
+        if (!f.exists()) {
+            preloadLog(handler, listener, logScrollView, "\n-> skipped lib" + lib + ".so (not in " + mcLibDir + ")");
+            return;
+        }
+        String err = NativePreload.dlopenGlobal(f.getAbsolutePath());
+        preloadLog(handler, listener, logScrollView, err == null
+                ? "\n-> mapped lib" + lib + ".so (dlopen, no JNI_OnLoad)"
+                : "\n-> FAILED lib" + lib + ".so: " + err);
+    }
+
+    private String loadLibraryOnMainThread(String lib) {
+        final String[] error = new String[1];
+        final CountDownLatch latch = new CountDownLatch(1);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                System.loadLibrary(lib);
+            } catch (Throwable t) {
+                error[0] = String.valueOf(t);
+            } finally {
+                latch.countDown();
+            }
+        });
+        try {
+            if (!latch.await(20, TimeUnit.SECONDS)) return "timeout waiting for main thread";
+        } catch (InterruptedException e) {
+            return "interrupted";
+        }
+        return error[0];
+    }
+
+    private void preloadLog(Handler handler, TextView listener, ScrollView logScrollView, String line) {
+        handler.post(() -> {
+            MblLog.ui(listener, line);
+            logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
+        });
     }
 
     private void launchMinecraft(@NotNull ApplicationInfo mcInfo) throws ClassNotFoundException {

@@ -65,7 +65,7 @@ public final class MblLog {
 
     private static Writer writer;
     private static long written;
-    private static java.lang.Process logcatProc;
+    private static Process logcatProc;
 
     private MblLog() {}
 
@@ -132,6 +132,26 @@ public final class MblLog {
         //noinspection ResultOfMethodCallIgnored
         internal.mkdirs();
         return internal;
+    }
+
+    // ---------------------------------------------------------------- preload mode switch
+
+    /** Reads mbl-logs/preload_mode.txt ("dlopen" default, or "mainthread"); creates it if missing. */
+    public static String readPreloadMode(Context ctx) {
+        try {
+            File f = new File(resolveDir(ctx), "preload_mode.txt");
+            if (!f.exists()) {
+                try (Writer w = new OutputStreamWriter(new FileOutputStream(f), StandardCharsets.UTF_8)) {
+                    w.write("dlopen\n");
+                }
+                return "dlopen";
+            }
+            String v = new String(java.nio.file.Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8)
+                    .trim().toLowerCase(Locale.ROOT);
+            return v.startsWith("main") ? "mainthread" : "dlopen";
+        } catch (Throwable t) {
+            return "dlopen";
+        }
     }
 
     // ---------------------------------------------------------------- session
@@ -213,7 +233,7 @@ public final class MblLog {
             write("[MBL] could not start logcat: " + e);
             return;
         }
-        final java.lang.Process proc = logcatProc;
+        final Process proc = logcatProc;
         Thread t = new Thread(() -> {
             try (BufferedReader r = new BufferedReader(new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;

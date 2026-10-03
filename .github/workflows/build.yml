@@ -145,6 +145,7 @@ jobs:
             ### Changes in this build
             - **Fix `libpairipcore.so not found`** — preloads Minecraft's native dependencies (`c++_shared`, `fmod`, `pairipcore`, `PlayFabMultiplayer`, `HttpClient.Android`, `maesdk`) before launching, for Minecraft 1.26.x builds
             - **Better diagnostics** — preload results are shown in the launcher log; `libmc.so` now logs `dlopen`/`dlsym` failures to logcat (tag `MBL`) instead of crashing silently
+            - **No more PairIP JNI_OnLoad segfault** — `libpairipcore.so` and the other native dependencies are now mapped with a plain `dlopen()` (new `libmblpreload.so`), which does not run `JNI_OnLoad`. Switch modes without rebuilding via `mbl-logs/preload_mode.txt` (`dlopen` default, or `mainthread`)
             - **Log saving** — each launch writes `mbl-logs/latestlogs.txt` (device info, launcher log, live logcat, Java exceptions, and the exit reason/tombstone of a crashed process added when you reopen the app). The previous attempt is kept as `previous-logs.txt`
 
             ### Install
