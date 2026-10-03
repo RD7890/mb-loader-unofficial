@@ -1,0 +1,61 @@
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+}
+
+android {
+    namespace 'io.bambosan.mbloader'
+    compileSdk 35
+    buildToolsVersion = "35.0.0"
+    defaultConfig {
+        applicationId "io.bambosan.mbloader"
+        minSdk 26
+        targetSdk 35
+        versionCode 18
+        versionName "1.7"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
+    }
+    
+    signingConfigs {
+        release {
+            storeFile file("../my-release-key.jks")
+            storePassword "lyssadev"
+            keyAlias "my-alias"
+            keyPassword "lyssadev"
+        }
+    }
+    
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    externalNativeBuild {
+        ndkBuild {
+            path "src/main/jni/Android.mk"
+        }
+    }
+    ndkVersion "27.1.12297006"
+}
+
+dependencies {
+    implementation libs.appcompat
+    implementation libs.constraintlayout
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'com.google.android.material:material:1.9.0'
+    implementation 'androidx.fragment:fragment:1.6.0'
+    implementation 'com.github.skydoves:colorpickerview:2.3.0'
+    testImplementation libs.junit
+    androidTestImplementation libs.ext.junit
+    androidTestImplementation libs.espresso.core
+}

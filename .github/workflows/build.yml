@@ -1,0 +1,159 @@
+name: Build MB Loader (Unofficial) APK
+
+on:
+  push:
+    branches: [ "main", "release/**" ]
+    paths-ignore: [ '**.md' ]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  APP_NAME: MBLoader-Unofficial
+
+jobs:
+  build:
+    name: Build MB Loader APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── 2. JDK 17 ─────────────────────────────────────────────────────────────
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # ── 3. Gradle cache ───────────────────────────────────────────────────────
+      - name: Restore Gradle cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/libs.versions.toml', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      # ── 4. Android SDK / NDK (libmc.so is built from app/src/main/jni) ────────
+      - name: Install Android SDK + NDK components
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-35" "platforms;android-34" \
+                  "build-tools;35.0.0" "ndk;27.1.12297006"
+
+      # ── 5. Signing keystore ───────────────────────────────────────────────────
+      # app/build.gradle signs the release build with ../my-release-key.jks
+      # (committed in the repo root) so every build keeps the same signature.
+      - name: Check signing keystore
+        run: |
+          if [ ! -f my-release-key.jks ]; then
+            echo "::error::my-release-key.jks is missing. A throwaway key would break updates for everyone on a previous install. Restore the committed keystore and rerun."
+            exit 1
+          fi
+          echo "Using committed keystore: $(wc -c < my-release-key.jks) bytes"
+
+      # ── 6. chmod gradlew ──────────────────────────────────────────────────────
+      - name: chmod gradlew
+        run: chmod +x ./gradlew
+
+      # ── 7. Auto version bump ──────────────────────────────────────────────────
+      # Base "major.minor" comes from versionName in app/build.gradle (e.g. 1.7),
+      # the CI run number becomes the patch number: 1.7.<run>.
+      - name: Bump version
+        run: |
+          BUILD=${{ github.run_number }}
+          BASE=$(grep -oP 'versionName "\K[0-9]+\.[0-9]+' app/build.gradle | head -1)
+          VER_NAME="${BASE}.${BUILD}"
+          VER_CODE=$((100 + BUILD))
+          sed -i "s/versionCode [0-9]*/versionCode ${VER_CODE}/" app/build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"${VER_NAME}\"/" app/build.gradle
+          echo "versionCode → ${VER_CODE}"
+          echo "versionName → ${VER_NAME}"
+
+      # ── 8. Build Release APK ──────────────────────────────────────────────────
+      - name: Assemble Release APK
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+
+      # ── 9. Version info ───────────────────────────────────────────────────────
+      - name: Get version info
+        id: version
+        run: |
+          VER=$(grep -oP 'versionName "\K[^"]+' app/build.gradle | head -1)
+          echo "name=$VER"                                >> $GITHUB_OUTPUT
+          echo "apk_name=${APP_NAME}-v${VER}.apk"         >> $GITHUB_OUTPUT
+          echo "Version: $VER"
+
+      # ── 10. Rename APK ────────────────────────────────────────────────────────
+      - name: Rename APK
+        run: |
+          OUTDIR="app/build/outputs/apk/release"
+          SRC=$(ls "$OUTDIR"/*.apk | head -1)
+          DEST="$OUTDIR/${{ steps.version.outputs.apk_name }}"
+          cp "$SRC" "$DEST"
+          echo "Renamed: $SRC → $DEST"
+          ls -lh "$OUTDIR"/${APP_NAME}-*.apk
+
+      # ── 11. Verify signature ──────────────────────────────────────────────────
+      - name: Verify APK signature
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/35.0.0/apksigner)
+          "$APKSIGNER" verify --print-certs \
+            "app/build/outputs/apk/release/${{ steps.version.outputs.apk_name }}"
+
+      # ── 12. Upload artifact ───────────────────────────────────────────────────
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        continue-on-error: true          # storage quota se build block na ho
+        with:
+          name: MBLoader-Unofficial-v${{ steps.version.outputs.name }}
+          path: app/build/outputs/apk/release/MBLoader-Unofficial-*.apk
+          retention-days: 7
+
+      # ── 13. GitHub Release ────────────────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.name }}
+          name: "MB Loader (Unofficial) v${{ steps.version.outputs.name }}"
+          body: |
+            ## MB Loader (Unofficial) v${{ steps.version.outputs.name }} — Automated Release
+
+            **Branch:** `${{ github.ref_name }}` | **Commit:** `${{ github.sha }}`
+            **Package:** `io.bambosan.mbloader`
+
+            ### Download
+
+            | File | Device |
+            |------|--------|
+            | `${{ steps.version.outputs.apk_name }}` | 64-bit ARM Android phones (arm64-v8a) |
+
+            ### Changes in this build
+            - **Fix `libpairipcore.so not found`** — preloads Minecraft's native dependencies (`c++_shared`, `fmod`, `pairipcore`, `PlayFabMultiplayer`, `HttpClient.Android`, `maesdk`) before launching, for Minecraft 1.26.x builds
+            - **Better diagnostics** — preload results are shown in the launcher log; `libmc.so` now logs `dlopen`/`dlsym` failures to logcat (tag `MBL`) instead of crashing silently
+
+            ### Install
+            1. Install the **official Minecraft: Bedrock Edition** from Google Play first (arm64 build)
+            2. Download the APK above and enable **Install from unknown sources**
+            3. Open **MB Loader**, then choose **MBL2** or **Draco** to launch Minecraft
+
+            > Unofficial build, not affiliated with Mojang, Microsoft or the original MaterialBinLoader author.
+          draft: false
+          prerelease: false
+          files: app/build/outputs/apk/release/MBLoader-Unofficial-*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
