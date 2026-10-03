@@ -233,7 +233,7 @@ public final class MblLog {
             write("[MBL] could not start logcat: " + e);
             return;
         }
-        final Process proc = logcatProc;
+        final java.lang.Process proc = logcatProc;
         Thread t = new Thread(() -> {
             try (BufferedReader r = new BufferedReader(new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
